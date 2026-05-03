@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portfolio Tracker</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome for Icons (Replaces Lucide) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- React & ReactDOM (UMD versions for browser) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Babel Standalone (Compiles JSX in the browser) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-200">
+  <div id="root"></div>
+
+  <!-- Type is text/babel so Babel knows to compile it -->
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // ---- ICON MAPPINGS (Replacing lucide-react) ----
+    const createIcon = (faClass) => ({ size = 18, className = "", ...props }) => (
+      <i className={`${faClass} ${className}`} 
+         style={{ fontSize: size, width: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} 
+         {...props} />
+    );
+
+    const PieChart = createIcon("fas fa-chart-pie");
+    const BarChart3 = createIcon("fas fa-chart-column");
+    const List = createIcon("fas fa-list");
+    const Sliders = createIcon("fas fa-sliders");
+    const Upload = createIcon("fas fa-upload");
+    const Plus = createIcon("fas fa-plus");
+    const Trash2 = createIcon("fas fa-trash");
+    const ArrowUpRight = createIcon("fas fa-arrow-trend-up");
+    const ArrowDownRight = createIcon("fas fa-arrow-trend-down");
+    const RefreshCw = createIcon("fas fa-rotate");
+    const DollarSign = createIcon("fas fa-dollar-sign");
+    const Briefcase = createIcon("fas fa-briefcase");
+    const AlertTriangle = createIcon("fas fa-triangle-exclamation");
+    const X = createIcon("fas fa-xmark");
+    const Check = createIcon("fas fa-check");
+    const Minus = createIcon("fas fa-minus");
+    const Cloud = createIcon("fas fa-cloud");
+    const CloudLightning = createIcon("fas fa-bolt");
+    const Eye = createIcon("fas fa-eye");
+    const EyeOff = createIcon("fas fa-eye-slash");
+    const Activity = createIcon("fas fa-chart-line");
+    const Lock = createIcon("fas fa-lock");
+    const LogOut = createIcon("fas fa-right-from-bracket");
+    const User = createIcon("fas fa-user");
+    const ShieldCheck = createIcon("fas fa-shield");
+
+
+    // 1. HARDCODE YOUR API KEYS HERE
+    const HARDCODED_FINNHUB_KEY = "d7fq2chr01qqb8rh6kugd7fq2chr01qqb8rh6kv0"; 
+    const HARDCODED_SUPABASE_URL = "https://pfjyvidotirlkfoharuq.supabase.co";
+    const HARDCODED_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmanl2aWRvdGlybGtmb2hhcnVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MzQwOTksImV4cCI6MjA5MjAxMDA5OX0.BK262yPcSeVVfTZvfHFniOBwm93zvFFtQSrPPNoLjIQ";
+
+    // 2. ASSET MAPPING DICTIONARY (From mapping.csv)
+    const ASSET_MAPPING = {
+      'QQQ': 'Nasdaq',
+      'TQQQ': 'Nasdaq',
+      'QQQM': 'Nasdaq',
+      'VBK': 'Small-Value',
+      'VBR': 'Small-Value',
+      'VTI': 'US ETF',
+      'VOO': 'US ETF',
+      'CSPX': 'US ETF',
+      'VEA': 'Ex-US ETF',
+      'VXUS': 'Ex-US ETF',
+      'VEU': 'Ex-US ETF',
+      'AMD': 'Stocks',
+      'GME': 'Stocks',
+      'NVDA': 'Stocks',
+      'ORCL': 'Stocks',
+      'PLTR': 'Stocks',
+      'TSLA': 'Stocks',
+      'IBKR': 'Stocks',
+      'IBIT': 'Bitcoin',
+      'TLT': 'Bonds',
+      'CASH & CASH INVESTMENTS': 'Cash',
+      'CASH BALANCE': 'Cash'
+    };
+
+    const CHART_COLORS = ['#34d399', '#3b82f6', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#f43f5e', '#a855f7'];
+
+    // Baseline generic assumptions for different asset classes (Used in Positions & Monte Carlo)
+    const CATEGORY_ASSUMPTIONS = {
+      'US ETF': { mu: 0.09, sigma: 0.16 },      // 9% return, 16% volatility
+      'Nasdaq': { mu: 0.12, sigma: 0.22 },      // 12% return, 22% volatility
+      'Small-Value': { mu: 0.10, sigma: 0.20 }, // 10% return, 20% volatility
+      'Ex-US ETF': { mu: 0.07, sigma: 0.18 },   // 7% return, 18% volatility
+      'Stocks': { mu: 0.11, sigma: 0.25 },      // 11% return, 25% volatility
+      'Bitcoin': { mu: 0.25, sigma: 0.60 },     // 25% return, 60% volatility
+      'Bonds': { mu: 0.04, sigma: 0.06 },       // 4% return, 6% volatility
+      'Cash': { mu: 0.02, sigma: 0.01 },        // 2% return, 1% volatility
+      'Other': { mu: 0.08, sigma: 0.20 }        // 8% return, 20% volatility
+    };
+
+    // 3. MULTI-FACTOR CORRELATION LOADINGS (Equity, Intl, Bond, Crypto sensitivities)
+    const CATEGORY_FACTORS = {
+      'US ETF': { equity: 0.90, intl: 0.10, bond: -0.10, crypto: 0.10 },
+      'Nasdaq': { equity: 0.95, intl: 0.10, bond: -0.10, crypto: 0.20 },
+      'Small-Value': { equity: 0.85, intl: 0.10, bond: 0.00, crypto: 0.05 },
+      'Ex-US ETF': { equity: 0.30, intl: 0.85, bond: -0.05, crypto: 0.10 },
+      'Stocks': { equity: 0.80, intl: 0.20, bond: -0.10, crypto: 0.10 },
+      'Bitcoin': { equity: 0.30, intl: 0.10, bond: 0.00, crypto: 0.90 },
+      'Bonds': { equity: -0.20, intl: -0.10, bond: 0.90, crypto: 0.00 },
+      'Cash': { equity: 0.00, intl: 0.00, bond: 0.00, crypto: 0.00 },
+      'Other': { equity: 0.50, intl: 0.30, bond: 0.00, crypto: 0.00 }
+    };
+
+    function App() {
+      // Auth State
+      const [session, setSession] = useState(() => {
+        const saved = localStorage.getItem('portfolio_session');
+        return saved ? JSON.parse(saved) : null;
+      });
+      const [authLoading, setAuthLoading] = useState(false);
+      const [authError, setAuthError] = useState('');
+
+      const [activeView, setActiveView] = useState('summary'); 
+      const [marketPrices, setMarketPrices] = useState({});
+      const [isRefreshing, setIsRefreshing] = useState(false);
+      const [marketDataStatus, setMarketDataStatus] = useState('loading'); 
+      
+      // Privacy Toggle
+      const [showNumbers, setShowNumbers] = useState(false);
+
+      // Portfolio State
+      const [brokers, setBrokers] = useState([
+        { id: 'broker_1', name: 'Charles Schwab' },
+        { id: 'broker_2', name: 'Firstrade' },
+        { id: 'broker_3', name: 'Interactive Brokers' }
+      ]);
+      const [categories, setCategories] = useState(['US ETF', 'Nasdaq', 'Small-Value', 'Ex-US ETF', 'Stocks', 'Bitcoin', 'Bonds', 'Cash', 'Other']);
+      const [positions, setPositions] = useState([]);
+      const [targetAllocations, setTargetAllocations] = useState({
+        'US ETF': 35,
+        'Nasdaq': 10,
+        'Small-Value': 10,
+        'Ex-US ETF': 14.5,
+        'Stocks': 15,
+        'Bitcoin': 1,
+        'Bonds': 14.5,
+        'Cash': 0
+      });
+
+      // Monte Carlo Simulation State
+      const [simSettings, setSimSettings] = useState({
+        years: 10,
+        contribFreq: 'Monthly',
+        contribAmt: 0,
+        contribAlloc: []
+      });
+
+      // Sync State
+      const [priceFetchTrigger, setPriceFetchTrigger] = useState(0);
+      const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+      const initialLoadDone = useRef(false);
+      const isFetchingRef = useRef(false);
+
+      // Persist Session
+      useEffect(() => {
+        if (session) localStorage.setItem('portfolio_session', JSON.stringify(session));
+        else localStorage.removeItem('portfolio_session');
+      }, [session]);
+
+      // Login Handler
+      const handleLogin = async (email, password) => {
+        setAuthLoading(true); setAuthError('');
+        try {
+          const response = await fetch(`${HARDCODED_SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+            method: 'POST',
+            headers: { 'apikey': HARDCODED_SUPABASE_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error_description || data.msg || 'Login failed');
+          setSession(data);
+        } catch (err) {
+          setAuthError(err.message);
+        } finally {
+          setAuthLoading(false);
+        }
+      };
+
+      // Logout Handler
+      const handleLogout = () => {
+        setSession(null);
+        setPositions([]);
+        setMarketPrices({});
+        initialLoadDone.current = false;
+      };
+
+      // Load data from Supabase initially
+      const loadFromCloud = async () => {
+        if (!HARDCODED_SUPABASE_URL || !HARDCODED_SUPABASE_KEY || !session) {
+          initialLoadDone.current = true;
+          return;
+        }
+        setIsCloudSyncing(true);
+        try {
+          // Fetch data securely tied to the logged-in user's ID
+          const response = await fetch(`${HARDCODED_SUPABASE_URL}/rest/v1/portfolio_data?id=eq.${session.user.id}`, {
+            headers: { 'apikey': HARDCODED_SUPABASE_KEY, 'Authorization': `Bearer ${session.access_token}` }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data && data.length > 0 && data[0].data) {
+              const cloudData = data[0].data;
+              if (cloudData.positions) setPositions(cloudData.positions);
+              if (cloudData.brokers) setBrokers(cloudData.brokers);
+              if (cloudData.targetAllocations && Object.keys(cloudData.targetAllocations).length > 0) {
+                 setTargetAllocations(cloudData.targetAllocations);
+              }
+              if (cloudData.simSettings) setSimSettings(cloudData.simSettings);
+              
+              // Automatically trigger a live price fetch shortly after cloud data loads
+              setTimeout(() => setPriceFetchTrigger(Date.now()), 500);
+            }
+          } else if (response.status === 401) {
+            // Token expired or invalid
+            handleLogout();
+          }
+        } catch (e) {
+          console.error("Failed to load from Supabase:", e);
+        } finally {
+          setIsCloudSyncing(false);
+          // Give React a moment to apply the loaded state before we start tracking changes
+          setTimeout(() => { initialLoadDone.current = true; }, 500);
+        }
+      };
+
+      // Execute initial load on mount or when session changes
+      useEffect(() => {
+        if (session) loadFromCloud();
+      }, [session]);
+
+      // Automatically sync to Supabase whenever portfolio data changes
+      useEffect(() => {
+        if (!initialLoadDone.current || !HARDCODED_SUPABASE_URL || !HARDCODED_SUPABASE_KEY || !session) return;
+        
+        const saveToCloud = async () => {
+          setIsCloudSyncing(true);
+          try {
+            await fetch(`${HARDCODED_SUPABASE_URL}/rest/v1/portfolio_data`, {
+              method: 'POST',
+              headers: {
+                'apikey': HARDCODED_SUPABASE_KEY,
+                'Authorization': `Bearer ${session.access_token}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates' // Upserts cleanly based on Primary Key
+              },
+              body: JSON.stringify({
+                id: session.user.id, // Save securely under their user ID
+                data: { positions, brokers, targetAllocations, simSettings }
+              })
+            });
+          } catch (e) {
+            console.error("Failed to save to Supabase:", e);
+          } finally {
+            setIsCloudSyncing(false);
+          }
+        };
+
+        // Debounce the save to prevent spamming the database during typing
+        const timer = setTimeout(saveToCloud, 1000);
+        return () => clearTimeout(timer);
+      }, [positions, brokers, targetAllocations, simSettings, session]);
+
+      const updateBrokerName = (id, newName) => {
+        setBrokers(prev => prev.map(b => b.id === id ? { ...b, name: newName } : b));
+      };
+
+      /**
+       * Finnhub API Fetcher (Direct)
+       */
+      const fetchPrices = async () => {
+        if (positions.length === 0 || isFetchingRef.current) return;
+        
+        isFetchingRef.current = true;
+        setIsRefreshing(true);
+        
+        try {
+          const uniqueTickers = [...new Set(positions.map(p => p.ticker))]
+            .filter(t => t && t !== '--' && !t.includes('CASH') && t !== 'CSPX');
+
+          if (uniqueTickers.length === 0) {
+            setIsRefreshing(false);
+            isFetchingRef.current = false;
+            return;
+          }
+
+          let newPrices = { ...marketPrices };
+          let updatedLive = false;
+
+          if (HARDCODED_FINNHUB_KEY && HARDCODED_FINNHUB_KEY !== "YOUR_API_KEY_HERE") {
+            const promises = uniqueTickers.map(async (symbol) => {
+              try {
+                const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${HARDCODED_FINNHUB_KEY}`);
+                if (!response.ok) return;
+                const data = await response.json();
+                
+                if (data.c && data.c > 0) {
+                  newPrices[symbol] = data.c;
+                  updatedLive = true;
+                }
+              } catch (e) {
+                console.error(`Finnhub fetch failed for ${symbol}:`, e);
+              }
+            });
+
+            await Promise.all(promises);
+          }
+          
+          if (updatedLive) {
+            setMarketPrices(newPrices);
+            setMarketDataStatus('live');
+          } else {
+            throw new Error('No valid price data returned');
+          }
+        } catch (err) {
+          console.warn("Generating mock data due to complete fetch failure.");
+          setMarketDataStatus('mock');
+          const uniqueTickers = [...new Set(positions.map(p => p.ticker))]
+            .filter(t => t && t !== '--' && !t.includes('CASH') && t !== 'CSPX');
+          const newPrices = { ...marketPrices };
+          uniqueTickers.forEach(t => {
+             const base = newPrices[t] || positions.find(p=>p.ticker === t)?.avgCost || 100;
+             newPrices[t] = base * (1 + (Math.random() * 0.01 - 0.005));
+          });
+          setMarketPrices(newPrices);
+        } finally {
+          setIsRefreshing(false);
+          isFetchingRef.current = false;
+        }
+      };
+
+      // Watch for the trigger to execute fetchPrices
+      useEffect(() => {
+        if (priceFetchTrigger > 0) fetchPrices();
+      }, [priceFetchTrigger]);
+
+      // Automatically trigger a fetch when returning to the app or resizing
+      useEffect(() => {
+        const handleAppWake = () => {
+          if (document.visibilityState === 'visible') {
+            setPriceFetchTrigger(Date.now());
+          }
+        };
+
+        window.addEventListener('focus', handleAppWake);
+        window.addEventListener('visibilitychange', handleAppWake);
+
+        // Debounce resize to prevent spamming the API
+        let resizeTimer;
+        const handleResize = () => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {
+            setPriceFetchTrigger(Date.now());
+          }, 1000);
+        };
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+          window.removeEventListener('focus', handleAppWake);
+          window.removeEventListener('visibilitychange', handleAppWake);
+          window.removeEventListener('resize', handleResize);
+          clearTimeout(resizeTimer);
+        };
+      }, []);
+
+      const enrichedPositions = useMemo(() => {
+        return positions.map(pos => {
+          const isCash = pos.ticker.includes('CASH');
+          let currentPrice = isCash ? 1 : (pos.ticker === 'CSPX' && pos.importedPrice ? pos.importedPrice : (marketPrices[pos.ticker] || pos.avgCost));
+
+          const isBond = !isCash && (pos.category?.toLowerCase().includes('bond') || 
+                         pos.category?.toLowerCase().includes('fixed') ||
+                         (pos.ticker && pos.ticker.length >= 8 && /^\d/.test(pos.ticker)));
+                         
+          const multiplier = isBond ? 0.01 : 1;
+          const currentValue = currentPrice * pos.shares * multiplier;
+          const costBasis = isCash ? pos.shares : (pos.avgCost * pos.shares * multiplier);
+          const gain = isCash ? 0 : (currentValue - costBasis);
+          const gainPct = (isCash || costBasis <= 0) ? 0 : (gain / costBasis) * 100;
+          
+          const expReturn = pos.expReturn !== undefined ? pos.expReturn : (CATEGORY_ASSUMPTIONS[pos.category] || CATEGORY_ASSUMPTIONS['Other']).mu;
+          const volatility = pos.volatility !== undefined ? pos.volatility : (CATEGORY_ASSUMPTIONS[pos.category] || CATEGORY_ASSUMPTIONS['Other']).sigma;
+          
+          return { ...pos, currentPrice, currentValue, costBasis, gain, gainPct, expReturn, volatility };
+        });
+      }, [positions, marketPrices]);
+
+      const portfolioTotals = useMemo(() => {
+        let totalValue = 0;
+        let totalCost = 0;
+        enrichedPositions.forEach(p => {
+          totalValue += p.currentValue;
+          totalCost += p.costBasis;
+        });
+        return {
+          value: totalValue,
+          cost: totalCost,
+          gain: totalValue - totalCost,
+          gainPct: totalCost > 0 ? ((totalValue - totalCost) / totalCost) * 100 : 0
+        };
+      }, [enrichedPositions]);
+
+      const formatCurrency = (val) => {
+        if (typeof val !== 'number' || isNaN(val)) return '$0.00';
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+      };
+      
+      const formatPercent = (val) => {
+        if (typeof val !== 'number' || isNaN(val)) return '0.00%';
+        return `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
+      };
+
+      // Render Login Screen if not authenticated
+      if (!session) {
+        return (
+          <div className="h-screen w-full bg-[#020617] flex flex-col items-center justify-center p-4 font-sans selection:bg-emerald-500/30 overflow-hidden">
+            <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 animate-in fade-in zoom-in-95 duration-500">
+              <div className="flex justify-center mb-6">
+                <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/10">
+                  <ShieldCheck className="text-emerald-400" size={32} />
+                </div>
+              </div>
+              <h1 className="text-2xl font-black text-white text-center tracking-tight mb-2">Secure Access</h1>
+              
+              {authError && (
+                <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start gap-3">
+                  <AlertTriangle className="text-red-400 shrink-0 mt-0.5" size={18} />
+                  <p className="text-sm text-red-200">{authError}</p>
+                </div>
+              )}
+
+              <form onSubmit={(e) => { e.preventDefault(); handleLogin(e.target.email.value, e.target.password.value); }} className="space-y-5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Email Address</label>
+                  {/* Using text-base to prevent iOS Safari auto-zoom on focus */}
+                  <input name="email" type="email" required className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-base text-slate-200 focus:outline-none focus:border-emerald-500 transition-colors" placeholder="you@example.com" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Password</label>
+                  {/* Using text-base to prevent iOS Safari auto-zoom on focus */}
+                  <input name="password" type="password" required className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-base text-slate-200 focus:outline-none focus:border-emerald-500 transition-colors" placeholder="••••••••" />
+                </div>
+                <button disabled={authLoading} type="submit" className={`w-full py-3.5 rounded-xl font-bold flex justify-center items-center gap-2 transition-all ${authLoading ? 'bg-slate-800 text-slate-500' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'}`}>
+                  {authLoading ? <RefreshCw className="animate-spin" size={20}/> : <><Lock size={18}/> Sign In</>}
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="h-screen w-full flex flex-col bg-slate-950 text-slate-200 font-sans selection:bg-emerald-500/30 overflow-hidden">
+          <style>{`
+            body { 
+              background-color: #020617; 
+              overflow-x: hidden;
+              margin: 0;
+            }
+            ::-webkit-scrollbar { width: 8px; height: 8px; }
+            ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); border-radius: 4px; }
+            ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+            ::-webkit-scrollbar-thumb:hover { background: #10b981; }
+            * { scrollbar-width: thin; scrollbar-color: #334155 rgba(15, 23, 42, 0.5); }
+            .hide-arrows::-webkit-outer-spin-button,
+            .hide-arrows::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+            .hide-arrows { -moz-appearance: textfield; }
+            .hide-scrollbar::-webkit-scrollbar { display: none; }
+            .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+          `}</style>
+          <nav className="shrink-0 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 relative z-20 shadow-xl shadow-slate-950/20">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex flex-col py-3 gap-3">
+                
+                {/* Top Row: Brand & Actions */}
+                <div className="flex justify-between items-center w-full">
+                  {/* Brand & Badges */}
+                  <div className="flex flex-col">
+                    <div className="text-emerald-400 font-bold text-lg sm:text-xl leading-none mb-1">
+                      PortfolioTracker
+                    </div>
+                    <div className="flex gap-1 flex-wrap">
+                      {positions.length > 0 && (
+                        <div className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider flex items-center gap-1 whitespace-nowrap ${marketDataStatus === 'live' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                          {marketDataStatus === 'live' ? 'LIVE DATA' : <><AlertTriangle size={10} /> MOCK</>}
+                        </div>
+                      )}
+                      {HARDCODED_SUPABASE_URL && HARDCODED_SUPABASE_KEY && (
+                        <div className="text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider flex items-center gap-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 whitespace-nowrap">
+                          {isCloudSyncing ? <CloudLightning size={10} className="animate-pulse"/> : <Cloud size={10} />}
+                          <span>{isCloudSyncing ? 'SYNCING' : 'SYNCED'}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Action Buttons */}
+                  <div className="flex gap-1.5 sm:gap-2">
+                    <button 
+                      onClick={() => setShowNumbers(!showNumbers)} 
+                      className={`p-2 rounded-lg transition-colors ${showNumbers ? 'bg-emerald-500 text-slate-900' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
+                      title={showNumbers ? "Hide Values" : "Show Values"}
+                    >
+                      {showNumbers ? <Eye size={18} className="sm:w-5 sm:h-5" /> : <EyeOff size={18} className="sm:w-5 sm:h-5" />}
+                    </button>
+                    <button onClick={fetchPrices} className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700 transition-colors text-slate-400 hover:text-white" title="Refresh Prices">
+                      <RefreshCw size={18} className={`sm:w-5 sm:h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-lg hover:bg-rose-500/20 hover:text-rose-400 transition-colors text-slate-400" title="Sign Out">
+                      <LogOut size={18} className="sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Bottom Row: Scrollable Navigation Tabs */}
+                <div className="w-full overflow-x-auto hide-scrollbar -mx-2 px-2 sm:mx-0 sm:px-0">
+                  <div className="flex space-x-2 bg-slate-800/50 sm:bg-slate-800 p-1 rounded-xl w-max sm:w-auto mx-auto sm:mx-0">
+                    <NavButton icon={<PieChart size={16} className="sm:w-[18px] sm:h-[18px]"/>} label="Summary" active={activeView === 'summary'} onClick={() => setActiveView('summary')} />
+                    <NavButton icon={<List size={16} className="sm:w-[18px] sm:h-[18px]"/>} label="Positions" active={activeView === 'positions'} onClick={() => setActiveView('positions')} />
+                    <NavButton icon={<Sliders size={16} className="sm:w-[18px] sm:h-[18px]"/>} label="Rebalance" active={activeView === 'rebalance'} onClick={() => setActiveView('rebalance')} />
+                    <NavButton icon={<Activity size={16} className="sm:w-[18px] sm:h-[18px]"/>} label="Monte Carlo" active={activeView === 'simulation'} onClick={() => setActiveView('simulation')} />
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </nav>
+
+          {/* Added bottom padding so content isn't hidden behind mobile browser toolbars */}
+          <main className="flex-1 overflow-y-auto overflow-x-hidden w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8 pb-20">
+            {activeView === 'summary' && (
+              <SummaryView 
+                totals={portfolioTotals} 
+                positions={enrichedPositions} 
+                formatCurrency={formatCurrency} 
+                formatPercent={formatPercent} 
+                showNumbers={showNumbers}
+              />
+            )}
+            {activeView === 'positions' && (
+              <PositionsView 
+                positions={enrichedPositions} brokers={brokers} categories={categories} setBrokers={setBrokers} setPositions={setPositions} setCategories={setCategories} updateBrokerName={updateBrokerName} formatCurrency={formatCurrency} formatPercent={formatPercent} onUploadSuccess={() => setPriceFetchTrigger(Date.now())}
+              />
+            )}
+            {activeView === 'rebalance' && <RebalanceView positions={enrichedPositions} totalValue={portfolioTotals.value} targetAllocations={targetAllocations} setTargetAllocations={setTargetAllocations} formatCurrency={formatCurrency} />}
+            {activeView === 'simulation' && <SimulationView positions={enrichedPositions} totalValue={portfolioTotals.value} formatCurrency={formatCurrency} simSettings={simSettings} setSimSettings={setSimSettings} />}
+          </main>
+        </div>
+      );
+    }
+
+    function NavButton({ icon, label, active, onClick }) {
+      return (
+        <button onClick={onClick} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-200 whitespace-nowrap ${active ? 'bg-slate-700 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}>
+          {icon} <span>{label}</span>
+        </button>
+      );
+    }
+
+    function SummaryView({ totals, positions, formatCurrency, formatPercent, showNumbers }) {
+      const assetAllocationData = useMemo(() => {
+        const agg = {};
+        positions.forEach(p => {
+          const cat = p.category || 'Other';
+          agg[cat] = (agg[cat] || 0) + p.currentValue;
+        });
+        return Object.entries(agg).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+      }, [positions]);
+
+      const etfAllocationData = useMemo(() => {
+        const agg = {};
+        positions.filter(p => p.category === 'US ETF' || p.category === 'Ex-US ETF').forEach(p => {
+          agg[p.ticker] = (agg[p.ticker] || 0) + p.currentValue;
+        });
+        return Object.entries(agg).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+      }, [positions]);
+
+      const stockAllocationData = useMemo(() => {
+        const agg = {};
+        positions.filter(p => p.category === 'Stocks').forEach(p => {
+          agg[p.ticker] = (agg[p.ticker] || 0) + p.currentValue;
+        });
+        return Object.entries(agg).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+      }, [positions]);
+
+      const investedAllocationData = useMemo(() => {
+        const agg = {};
+        positions.filter(p => p.category !== 'Bonds' && p.category !== 'Cash').forEach(p => {
+          const cat = p.category || 'Other';
+          agg[cat] = (agg[cat] || 0) + p.currentValue;
+        });
+        return Object.entries(agg).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+      }, [positions]);
+
+      const uniquePositionCount = useMemo(() => {
+        return new Set(positions.filter(p => p.ticker !== '--').map(p => p.ticker)).size;
+      }, [positions]);
+
+      const hkdText = showNumbers 
+        ? `≈ ${new Intl.NumberFormat('en-HK', { style: 'currency', currency: 'HKD' }).format(totals.value * 7.8)}` 
+        : '≈ HK$ ••••••';
+
+      if (positions.length === 0) {
+        return (
+          <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+            <Briefcase size={64} className="mb-4 opacity-20" />
+            <h2 className="text-xl font-semibold text-center">No data to display</h2>
+            <p className="text-center text-sm px-4">Go to the Positions tab to add or upload your portfolio.</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-500">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+            <StatCard title="Total Value" value={showNumbers ? formatCurrency(totals.value) : '••••••'} bottomText={hkdText} icon={<DollarSign size={24}/>} />
+            <StatCard title="Total Gain/Loss" value={showNumbers ? formatCurrency(Math.abs(totals.gain)) : '••••••'} subtitle={formatPercent(totals.gainPct)} isPositive={totals.gain >= 0} icon={totals.gain >= 0 ? <ArrowUpRight size={24}/> : <ArrowDownRight size={24}/>} />
+            <StatCard title="Total Positions" value={showNumbers ? uniquePositionCount : '••'} icon={<Briefcase size={24}/>} />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+            <AllocationCard title="Asset Allocation" data={assetAllocationData} formatCurrency={formatCurrency} showNumbers={showNumbers} />
+            <AllocationCard title="ETF Exposure" data={etfAllocationData} formatCurrency={formatCurrency} showNumbers={showNumbers} />
+            <AllocationCard title="Stock Exposure" data={stockAllocationData} formatCurrency={formatCurrency} showNumbers={showNumbers} />
+            <AllocationCard title="Invested (Ex-Cash/Bonds)" data={investedAllocationData} formatCurrency={formatCurrency} showNumbers={showNumbers} />
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl overflow-hidden flex flex-col">
+            <h3 className="text-lg font-semibold mb-4 text-slate-100">Performance List</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+              {[...positions].sort((a, b) => b.gainPct - a.gainPct).map(pos => (
+                <div key={pos.id} className="flex justify-between items-center p-3 bg-slate-800/50 rounded-xl border border-slate-700/50">
+                  <div>
+                    <div className="font-bold text-slate-200 text-sm sm:text-base">{pos.ticker}</div>
+                    <div className="text-xs text-slate-400">{pos.category}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-medium text-slate-100 text-sm sm:text-base">
+                      {showNumbers ? (pos.ticker.includes('CASH') ? formatCurrency(pos.currentValue) : formatCurrency(pos.currentPrice)) : '••••••'}
+                    </div>
+                    {!pos.ticker.includes('CASH') && (
+                      <div className={`text-xs flex items-center justify-end font-bold ${pos.gainPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {pos.gainPct >= 0 ? <ArrowUpRight size={12}/> : <ArrowDownRight size={12}/>}
+                        {Math.abs(pos.gainPct).toFixed(2)}%
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function AllocationCard({ title, data, formatCurrency, showNumbers }) {
+      const total = data.reduce((sum, d) => sum + d.value, 0);
+      const maxVal = data.length > 0 ? Math.max(...data.map(d => d.value)) : 0;
+      
+      return (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl flex flex-col max-h-[300px] sm:max-h-[350px]">
+          <h3 className="text-base sm:text-lg font-semibold mb-4 flex items-center gap-2 shrink-0">
+            <BarChart3 className="text-emerald-400 sm:w-5 sm:h-5" size={18} /> {title}
+          </h3>
+          <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3 sm:space-y-4">
+            {data.length === 0 ? (
+              <div className="text-slate-600 text-sm italic text-center py-4">No assets in this category</div>
+            ) : (
+              data.map((d, i) => {
+                const percentage = total > 0 ? ((d.value / total) * 100) : 0;
+                const barWidth = maxVal > 0 ? ((d.value / maxVal) * 100) : 0;
+                const color = CHART_COLORS[i % CHART_COLORS.length];
+                
+                return (
+                  <div key={d.name} className="group">
+                    <div className="flex justify-between items-end mb-1">
+                      <div className="flex items-center gap-2 truncate pr-2">
+                        <span className="font-bold text-slate-200 truncate text-xs sm:text-sm">{d.name}</span>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="font-medium text-slate-200 mr-2 text-xs sm:text-sm">{percentage.toFixed(1)}%</span>
+                        <span className="text-[10px] sm:text-xs text-slate-500">{showNumbers ? formatCurrency(d.value) : '••••••'}</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 sm:h-2 w-full bg-slate-800/50 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full rounded-full transition-all duration-1000 ease-out"
+                        style={{ width: `${barWidth}%`, backgroundColor: color }}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function StatCard({ title, value, subtitle, icon, isPositive, bottomText }) {
+      return (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 sm:-right-6 sm:-top-6 text-slate-800 opacity-30">
+            {React.cloneElement(icon, { size: 80, className: "sm:w-[100px] sm:h-[100px]" })}
+          </div>
+          <div className="relative z-10">
+            <div className="text-slate-400 font-medium text-xs sm:text-sm mb-1">{title}</div>
+            <div className="text-2xl sm:text-3xl font-bold text-slate-100 tracking-tight mb-1 sm:mb-2">{value}</div>
+            {subtitle && <div className={`text-xs sm:text-sm font-bold flex items-center gap-1 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{subtitle}</div>}
+            {bottomText && <div className="text-[10px] sm:text-xs font-medium text-slate-500 mt-1">{bottomText}</div>}
+          </div>
+        </div>
+      );
+    }
+
+    function BrokerTab({ broker, active, onClick, onRename, onDelete }) {
+      const [isEditing, setIsEditing] = useState(false);
+      const [confirmDelete, setConfirmDelete] = useState(false);
+      const [name, setName] = useState(broker.name);
+      
+      const handleBlur = () => {
+        setIsEditing(false);
+        if (name.trim() && name !== broker.name) onRename(broker.id, name);
+      };
+
+      if (confirmDelete) {
+        return (
+          <div className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 bg-rose-500/20 text-rose-300 border border-rose-500/30 shadow-md whitespace-nowrap`}>
+            <span>Delete?</span>
+            <button onClick={(e) => { e.stopPropagation(); onDelete(broker.id); }} className="hover:text-white bg-rose-500/50 rounded-full p-0.5"><Check size={14}/></button>
+            <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} className="hover:text-white bg-slate-800 rounded-full p-0.5"><X size={14}/></button>
+          </div>
+        );
+      }
+
+      return (
+        <div onClick={onClick} onDoubleClick={() => setIsEditing(true)} className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors cursor-pointer flex items-center gap-2 whitespace-nowrap ${active ? 'bg-slate-700 text-white shadow-md' : 'bg-transparent text-slate-400 hover:bg-slate-800'}`}>
+          {isEditing ? (
+            <input autoFocus className="bg-transparent border-b border-emerald-500 outline-none w-20 text-emerald-400 px-1" value={name} onChange={e => setName(e.target.value)} onBlur={handleBlur} onKeyDown={e => e.key === 'Enter' && handleBlur()} />
+          ) : (
+            <>
+              {broker.name}
+              {active && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+                  className="ml-1 text-slate-400 hover:text-rose-400 transition-colors"
+                  title="Delete Broker"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    function PositionsView({ positions, brokers, categories, setBrokers, setPositions, setCategories, updateBrokerName, formatCurrency, formatPercent, onUploadSuccess }) {
+      const [activeTab, setActiveTab] = useState('all');
+      const [isAddingBroker, setIsAddingBroker] = useState(false);
+      const [newBrokerName, setNewBrokerName] = useState('');
+      const [sortConfig, setSortConfig] = useState({ key: 'currentValue', direction: 'desc' });
+      const fileInputRef = useRef(null);
+
+      const requestSort = (key) => {
+        let direction = 'desc';
+        if (sortConfig.key === key && sortConfig.direction === 'desc') {
+          direction = 'asc';
+        }
+        setSortConfig({ key, direction });
+      };
+
+      const handleDeleteBroker = (brokerId) => {
+        setBrokers(prev => prev.filter(b => b.id !== brokerId));
+        setPositions(prev => prev.filter(p => p.brokerId !== brokerId));
+        setActiveTab('all');
+      };
+
+      const updateMetric = (id, metricName, value, ticker) => {
+        setPositions(prev => prev.map(p => {
+          if (activeTab === 'all' && p.ticker === ticker) return { ...p, [metricName]: value };
+          if (p.id === id) return { ...p, [metricName]: value };
+          return p;
+        }));
+      };
+
+      const filteredPositions = useMemo(() => {
+        let result = [];
+        if (activeTab !== 'all') {
+          result = positions.filter(p => p.brokerId === activeTab);
+        } else {
+          const grouped = {};
+          positions.forEach(p => {
+            const key = p.ticker;
+            if (!grouped[key]) {
+              grouped[key] = { id: `grouped_${key}`, ticker: p.ticker, shares: 0, costBasis: 0, currentValue: 0, gain: 0, category: p.category, currentPrice: p.currentPrice, expReturn: p.expReturn, volatility: p.volatility };
+            }
+            grouped[key].shares += p.shares;
+            grouped[key].costBasis += p.costBasis;
+            grouped[key].currentValue += p.currentValue;
+            grouped[key].gain += p.gain;
+          });
+          result = Object.values(grouped).map(g => ({ 
+            ...g, 
+            avgCost: g.shares > 0 ? g.costBasis / g.shares : 0, 
+            gainPct: g.costBasis > 0 ? (g.gain / g.costBasis) * 100 : 0
+          }));
+        }
+
+        result.sort((a, b) => {
+          let valA = a[sortConfig.key];
+          let valB = b[sortConfig.key];
+
+          if (typeof valA === 'string') valA = valA.toLowerCase();
+          if (typeof valB === 'string') valB = valB.toLowerCase();
+
+          if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+          if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+          return 0;
+        });
+
+        return result;
+      }, [positions, activeTab, sortConfig]);
+
+      const handleAddBroker = () => {
+        if (newBrokerName.trim()) {
+          const newId = `broker_${Date.now()}`;
+          setBrokers([...brokers, { id: newId, name: newBrokerName.trim() }]);
+          setNewBrokerName('');
+          setIsAddingBroker(false);
+          setActiveTab(newId);
+        }
+      };
+
+      const updateCategory = (id, newCategory, ticker) => {
+        setPositions(prev => prev.map(p => {
+          if (activeTab === 'all' && p.ticker === ticker) return { ...p, category: newCategory };
+          if (p.id === id) return { ...p, category: newCategory };
+          return p;
+        }));
+      };
+
+      const deletePosition = (id, ticker) => {
+        if (activeTab === 'all') setPositions(prev => prev.filter(p => p.ticker !== ticker));
+        else setPositions(prev => prev.filter(p => p.id !== id));
+      };
+
+      const cleanNum = (str) => {
+        if (!str) return 0;
+        const strVal = str.toString();
+        const isNegative = strVal.includes('-') || (strVal.includes('(') && strVal.includes(')'));
+        const val = parseFloat(strVal.replace(/[^0-9.]/g, '')) || 0;
+        return isNegative ? -val : val;
+      };
+
+      const handleFileUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const csvData = event.target.result;
+          const lines = csvData.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+          if (lines.length < 2) return;
+          
+          let headerIdx = -1;
+          for(let i=0; i < Math.min(lines.length, 10); i++) {
+            const lowerLine = lines[i].toLowerCase().replace(/[^a-z0-9,]/g, '');
+            if (lowerLine.includes("symbol") || lowerLine.includes("instrument") || lowerLine.includes("description")) { headerIdx = i; break; }
+          }
+          if (headerIdx === -1) {
+            console.warn("Could not detect valid CSV headers.");
+            return;
+          }
+
+          const headers = lines[headerIdx].split(',').map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+          const parsed = lines.slice(headerIdx + 1).map((line, idx) => {
+            const cols = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.trim().replace(/"/g, ''));
+            
+            const getColValue = (possibleNames) => {
+              for (const name of possibleNames) {
+                const i = headers.findIndex(h => h === name);
+                if (i !== -1) return cols[i];
+              }
+              for (const name of possibleNames) {
+                const i = headers.findIndex(h => h.includes(name));
+                if (i !== -1) return cols[i];
+              }
+              return null;
+            };
+
+            const tickerRaw = getColValue(['symbol', 'instrument', 'ticker']) || '';
+            const descRaw = getColValue(['description', 'desc', 'name']) || '';
+            const sharesStr = getColValue(['qty', 'quantity', 'position', 'pos']);
+            
+            const costStr = getColValue(['avgprice', 'unitcost', 'avgcost', 'costshare', 'price']);
+            const lastPriceStr = getColValue(['last', 'price']); 
+            const mktValStr = getColValue(['marketvalue', 'mktval', 'value', 'amount', 'balance']);
+            const typeStr = getColValue(['assettype', 'category', 'type']) || '';
+
+            const shares = cleanNum(sharesStr);
+            const cost = cleanNum(costStr);
+            const lastPrice = cleanNum(lastPriceStr);
+            const mktVal = cleanNum(mktValStr);
+
+            const upperTicker = tickerRaw.toUpperCase();
+            const upperDesc = descRaw.toUpperCase();
+
+            if (upperTicker.includes('ACCOUNT TOTAL') || upperDesc.includes('ACCOUNT TOTAL') || upperTicker === 'TOTAL') {
+              return null;
+            }
+
+            const isCash = upperTicker.includes('CASH') || upperTicker === 'USD';
+
+            if (isCash) {
+              const cashAmt = mktVal || cost || shares || 0;
+              if (cashAmt === 0) return null;
+              return { 
+                id: `imp_${Date.now()}_${idx}`, 
+                brokerId: activeTab === 'all' ? (brokers[0]?.id || 'broker_1') : activeTab, 
+                ticker: 'CASH', 
+                shares: cashAmt, 
+                avgCost: 1, 
+                importedPrice: 1,
+                category: 'Cash',
+                expReturn: CATEGORY_ASSUMPTIONS['Cash'].mu,
+                volatility: CATEGORY_ASSUMPTIONS['Cash'].sigma
+              };
+            }
+
+            if (!tickerRaw || tickerRaw === '--' || tickerRaw.toLowerCase() === 'symbol' || isNaN(shares) || shares === 0) return null;
+
+            let category = ASSET_MAPPING[upperTicker] || (/^\d/.test(upperTicker) ? 'Bonds' : 'Stocks');
+            if (!ASSET_MAPPING[upperTicker] && typeStr.toUpperCase().includes('ETF')) category = 'US ETF';
+
+            return { 
+              id: `imp_${Date.now()}_${idx}`, 
+              brokerId: activeTab === 'all' ? (brokers[0]?.id || 'broker_1') : activeTab, 
+              ticker: upperTicker, 
+              shares, 
+              avgCost: cost, 
+              importedPrice: lastPrice,
+              category,
+              expReturn: (CATEGORY_ASSUMPTIONS[category] || CATEGORY_ASSUMPTIONS['Other']).mu,
+              volatility: (CATEGORY_ASSUMPTIONS[category] || CATEGORY_ASSUMPTIONS['Other']).sigma
+            };
+          }).filter(Boolean);
+
+          if (parsed.length > 0) {
+            const targetBrokerId = activeTab === 'all' ? (brokers[0]?.id || 'broker_1') : activeTab;
+            
+            setPositions(prev => {
+              const otherPositions = prev.filter(p => p.brokerId !== targetBrokerId);
+              return [...otherPositions, ...parsed];
+            });
+            
+            if (onUploadSuccess) onUploadSuccess();
+          }
+        };
+        reader.readAsText(file);
+        e.target.value = null;
+      };
+
+      const SortHeader = ({ label, sortKey, alignRight = false }) => (
+        <th 
+          className={`p-3 sm:p-4 cursor-pointer hover:bg-slate-800/50 transition-colors select-none whitespace-nowrap ${alignRight ? 'text-right' : 'text-left'}`} 
+          onClick={() => requestSort(sortKey)}
+        >
+          <div className={`flex items-center gap-1 ${alignRight ? 'justify-end' : 'justify-start'}`}>
+            {label}
+            {sortConfig.key === sortKey && (
+              <span className="text-emerald-400 text-xs">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+            )}
+          </div>
+        </th>
+      );
+
+      return (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+          {/* Scrollable controls row */}
+          <div className="flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-2 bg-slate-800/50 p-3 sm:p-4 border-b border-slate-700">
+            <button onClick={() => setActiveTab('all')} className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-base sm:text-sm font-semibold transition-colors whitespace-nowrap ${activeTab === 'all' ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>All Positions</button>
+            {brokers.map(b => (
+              <BrokerTab 
+                key={b.id} 
+                broker={b} 
+                active={activeTab === b.id} 
+                onClick={() => setActiveTab(b.id)} 
+                onRename={updateBrokerName} 
+                onDelete={handleDeleteBroker}
+              />
+            ))}
+            {isAddingBroker ? (
+              <div className="flex items-center gap-2">
+                <input type="text" autoFocus className="bg-slate-950 border border-slate-700 text-base sm:text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 w-28 sm:w-32 text-slate-200" placeholder="Name" value={newBrokerName} onChange={e => setNewBrokerName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddBroker()} />
+                <button onClick={handleAddBroker} className="text-emerald-400 p-1 shrink-0"><Plus size={18}/></button>
+              </div>
+            ) : (
+              <button onClick={() => setIsAddingBroker(true)} className="flex items-center gap-1 text-sm sm:text-xs text-slate-400 hover:text-emerald-400 px-2 sm:px-3 py-2 whitespace-nowrap shrink-0">
+                <Plus size={14}/> Add Broker
+              </button>
+            )}
+            <div className="flex-1"></div>
+            <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+            {activeTab !== 'all' && (
+              <button onClick={() => fileInputRef.current.click()} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap shrink-0">
+                <Upload size={14} className="sm:w-4 sm:h-4"/> <span className="hidden sm:inline">Upload CSV</span><span className="sm:hidden">Upload</span>
+              </button>
+            )}
+          </div>
+          
+          {/* Scrollable Table */}
+          <div className="overflow-x-auto hide-scrollbar">
+            <table className="w-full text-left border-collapse min-w-[700px]">
+              <thead>
+                <tr className="bg-slate-900/50 border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
+                  <SortHeader label="Asset" sortKey="ticker" />
+                  <SortHeader label="Category" sortKey="category" />
+                  <SortHeader label="Shares / Amt" sortKey="shares" alignRight />
+                  <SortHeader label="Avg Cost" sortKey="avgCost" alignRight />
+                  <SortHeader label="Mkt Price" sortKey="currentPrice" alignRight />
+                  <SortHeader label="Total Value" sortKey="currentValue" alignRight />
+                  <SortHeader label="Gain / Loss" sortKey="gainPct" alignRight />
+                  <SortHeader label="Exp. Return" sortKey="expReturn" alignRight />
+                  <SortHeader label="Volatility" sortKey="volatility" alignRight />
+                  <th className="p-3 sm:p-4 w-12 sm:w-16"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/50 text-xs sm:text-sm">
+                {filteredPositions.map((pos) => (
+                  <tr key={pos.id} className="hover:bg-slate-800/30 transition-colors group">
+                    <td className="p-3 sm:p-4 font-bold text-slate-200">{pos.ticker}</td>
+                    <td className="p-3 sm:p-4">
+                      <select value={pos.category} onChange={(e) => updateCategory(pos.id, e.target.value, pos.ticker)} className="bg-slate-950 border border-slate-700 rounded-md text-[10px] sm:text-xs px-2 py-1 text-slate-300 w-[90px] sm:w-auto focus:outline-none">
+                        {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </td>
+                    <td className="p-3 sm:p-4 text-right text-slate-300">{pos.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                    <td className="p-3 sm:p-4 text-right text-slate-400">{pos.ticker.includes('CASH') ? '--' : formatCurrency(pos.avgCost)}</td>
+                    <td className="p-3 sm:p-4 text-right font-medium text-slate-200">{pos.ticker.includes('CASH') ? '--' : formatCurrency(pos.currentPrice)}</td>
+                    <td className="p-3 sm:p-4 text-right font-semibold text-slate-100">{formatCurrency(pos.currentValue)}</td>
+                    <td className="p-3 sm:p-4 text-right">
+                      {!pos.ticker.includes('CASH') ? (
+                        <>
+                          <div className={`font-medium ${pos.gain >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(pos.gain)}</div>
+                          <div className={`text-[10px] sm:text-xs ${pos.gainPct >= 0 ? 'text-emerald-500/80' : 'text-rose-500/80'}`}>{formatPercent(pos.gainPct)}</div>
+                        </>
+                      ) : <span className="text-slate-600">--</span>}
+                    </td>
+                    <td className="p-3 sm:p-4">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => updateMetric(pos.id, 'expReturn', Math.max(-1, Number((pos.expReturn - 0.001).toFixed(3))), pos.ticker)} className="p-1 sm:p-1.5 bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-700 rounded-md transition-colors"><Minus size={12}/></button>
+                        <span className="text-emerald-400 w-10 sm:w-12 text-center font-medium">{(pos.expReturn * 100).toFixed(1)}%</span>
+                        <button onClick={() => updateMetric(pos.id, 'expReturn', Number((pos.expReturn + 0.001).toFixed(3)), pos.ticker)} className="p-1 sm:p-1.5 bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-slate-700 rounded-md transition-colors"><Plus size={12}/></button>
+                      </div>
+                    </td>
+                    <td className="p-3 sm:p-4">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => updateMetric(pos.id, 'volatility', Math.max(0, Number((pos.volatility - 0.001).toFixed(3))), pos.ticker)} className="p-1 sm:p-1.5 bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-700 rounded-md transition-colors"><Minus size={12}/></button>
+                        <span className="text-rose-400 w-10 sm:w-12 text-center font-medium">{(pos.volatility * 100).toFixed(1)}%</span>
+                        <button onClick={() => updateMetric(pos.id, 'volatility', Number((pos.volatility + 0.001).toFixed(3)), pos.ticker)} className="p-1 sm:p-1.5 bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-slate-700 rounded-md transition-colors"><Plus size={12}/></button>
+                      </div>
+                    </td>
+                    <td className="p-3 sm:p-4 text-center">
+                      <button onClick={() => deletePosition(pos.id, pos.ticker)} className="text-slate-600 hover:text-rose-400 lg:opacity-0 group-hover:opacity-100 transition-all p-1"><Trash2 size={16}/></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function RebalanceView({ positions, totalValue, targetAllocations, setTargetAllocations, formatCurrency }) {
+      const categoryData = useMemo(() => {
+        const agg = {};
+        positions.forEach(p => {
+          const cat = p.category || 'Other';
+          if(!agg[cat]) {
+            agg[cat] = { category: cat, currentValue: 0, tickers: new Set(), isCash: cat === 'Cash' };
+          }
+          agg[cat].currentValue += p.currentValue;
+          agg[cat].tickers.add(p.ticker);
+        });
+
+        return Object.values(agg).map(a => {
+          const currentPct = totalValue > 0 ? (a.currentValue / totalValue) * 100 : 0;
+          
+          const targetPct = targetAllocations[a.category] !== undefined ? targetAllocations[a.category] : Number(currentPct.toFixed(1));
+          const targetValue = (Number(targetPct) / 100) * totalValue;
+          
+          const diffValue = targetValue - a.currentValue;
+          return { 
+            ...a, 
+            currentPct, 
+            targetPct, 
+            targetValue, 
+            diffValue,
+            includedAssets: Array.from(a.tickers).sort()
+          };
+        }).sort((a,b) => b.currentValue - a.currentValue);
+      }, [positions, totalValue, targetAllocations]);
+
+      const totalTargetPct = categoryData.reduce((sum, a) => sum + (Number(a.targetPct) || 0), 0);
+
+      return (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
+          <div className="flex justify-between items-center mb-4 sm:mb-6">
+            <h2 className="text-lg sm:text-xl font-bold text-slate-100 flex items-center gap-2"><Sliders className="text-emerald-400" /> Category Rebalancing</h2>
+          </div>
+          <div className="overflow-x-auto hide-scrollbar rounded-xl border border-slate-800">
+            <table className="w-full text-left min-w-[500px]">
+              <thead className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="p-3 sm:p-4 align-top whitespace-nowrap">Category</th>
+                  <th className="p-3 sm:p-4 text-right align-top whitespace-nowrap">Current %</th>
+                  <th className="p-3 sm:p-4 text-right align-top whitespace-nowrap">
+                    Target %
+                    <div className={`text-[10px] mt-1 tracking-tight ${Math.abs(100 - totalTargetPct) < 0.1 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      (Sum: {totalTargetPct.toFixed(1)}%)
+                    </div>
+                  </th>
+                  <th className="p-3 sm:p-4 text-right align-top whitespace-nowrap">Difference</th>
+                  <th className="p-3 sm:p-4 text-center align-top whitespace-nowrap">Action</th>
+                  <th className="p-3 sm:p-4 align-top whitespace-nowrap">Included Assets</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/50">
+                {categoryData.map((row) => (
+                  <tr key={row.category} className="hover:bg-slate-800/30 transition-colors text-xs sm:text-sm">
+                    <td className="p-3 sm:p-4 font-bold text-slate-200 whitespace-nowrap">{row.category}</td>
+                    <td className="p-3 sm:p-4 text-right">{row.currentPct.toFixed(1)}%</td>
+                    <td className="p-3 sm:p-4 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button 
+                          onClick={() => setTargetAllocations(p => ({...p, [row.category]: Math.max(0, Number((Number(row.targetPct || 0) - 1).toFixed(1)))}))}
+                          className="p-1 sm:p-1.5 bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-700 rounded-md transition-colors"
+                        >
+                          <Minus size={14}/>
+                        </button>
+                        {/* Using text-base to prevent iOS Safari auto-zoom on focus */}
+                        <input 
+                          type="number" 
+                          step="0.1" 
+                          className="w-14 sm:w-16 bg-slate-950 border border-slate-700 rounded-md text-center px-1 py-1 text-base sm:text-sm text-slate-200 hide-arrows outline-none focus:border-emerald-500" 
+                          value={row.targetPct === '' ? '' : row.targetPct} 
+                          onChange={(e) => setTargetAllocations(p => ({...p, [row.category]: e.target.value === '' ? '' : parseFloat(e.target.value)}))} 
+                        />
+                        <button 
+                          onClick={() => setTargetAllocations(p => ({...p, [row.category]: Math.min(100, Number((Number(row.targetPct || 0) + 1).toFixed(1)))}))}
+                          className="p-1 sm:p-1.5 bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-slate-700 rounded-md transition-colors"
+                        >
+                          <Plus size={14}/>
+                        </button>
+                      </div>
+                    </td>
+                    <td className={`p-3 sm:p-4 text-right font-medium whitespace-nowrap ${row.diffValue > 0 ? 'text-emerald-400' : row.diffValue < 0 ? 'text-rose-400' : 'text-slate-500'}`}>{formatCurrency(row.diffValue)}</td>
+                    <td className="p-3 sm:p-4 text-center">
+                      {Math.abs(row.diffValue) > 0.01 && !row.isCash && (
+                        <span className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-xs font-bold whitespace-nowrap ${row.diffValue > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                          {row.diffValue > 0 ? 'BUY' : 'SELL'}
+                        </span>
+                      )}
+                      {row.isCash && Math.abs(row.diffValue) > 0.01 && (
+                        <span className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-xs font-bold whitespace-nowrap ${row.diffValue > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                          {row.diffValue > 0 ? 'DEPOSIT' : 'WITHDRAW'}
+                        </span>
+                      )}
+                      {Math.abs(row.diffValue) <= 0.01 && (
+                        <span className="text-slate-600 font-bold text-xs">HOLD</span>
+                      )}
+                    </td>
+                    <td className="p-3 sm:p-4">
+                      <div className="flex flex-wrap gap-1 min-w-[100px]">
+                        {row.includedAssets.map(t => (
+                          <span key={t} className="px-1.5 sm:px-2 py-0.5 bg-slate-800/80 text-slate-400 rounded text-[10px] font-bold border border-slate-700">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // MONTE CARLO SIMULATION VIEW
+    // =====================================================================
+
+    function randn_bm() {
+      var u = 0, v = 0;
+      while(u === 0) u = Math.random();
+      while(v === 0) v = Math.random();
+      return Math.sqrt( -2.0 * Math.log( u ) ) * Math.cos( 2.0 * Math.PI * v );
+    }
+
+    function SimulationView({ positions, totalValue, formatCurrency, simSettings, setSimSettings }) {
+      const { years, contribFreq, contribAmt, contribAlloc } = simSettings;
+      const [simRunning, setSimRunning] = useState(false);
+      const [results, setResults] = useState(null);
+      const [hoveredBin, setHoveredBin] = useState(null);
+      
+      const updateSimSettings = (updates) => setSimSettings(prev => ({ ...prev, ...updates }));
+      
+      const uniqueAssets = useMemo(() => Array.from(new Set(positions.map(p => p.ticker))).filter(t => t !== '--').sort(), [positions]);
+
+      // Add default contribution allocation row when assets are available
+      useEffect(() => {
+        if (contribAlloc.length === 0 && uniqueAssets.length > 0) {
+          updateSimSettings({ contribAlloc: [{ id: Date.now(), ticker: uniqueAssets[0], pct: 100 }] });
+        }
+      }, [uniqueAssets.length, contribAlloc.length]);
+
+      const allocSum = contribAlloc.reduce((sum, row) => sum + (Number(row.pct) || 0), 0);
+
+      // Helper to get category for a ticker from current positions
+      const getCategoryForTicker = (ticker) => {
+        const existing = positions.find(p => p.ticker === ticker);
+        if (existing && existing.category) return existing.category;
+        return ASSET_MAPPING[ticker] || 'Other';
+      };
+
+      // Build tickerMap for individual asset simulation
+      const tickerMap = useMemo(() => {
+         const map = {};
+         // 1. Add existing positions
+         positions.forEach(p => {
+           if (p.ticker === '--') return;
+           if (!map[p.ticker]) {
+             map[p.ticker] = {
+               currentValue: 0,
+               contribAmt: 0,
+               mu: p.expReturn || CATEGORY_ASSUMPTIONS['Other'].mu,
+               sigma: p.volatility || CATEGORY_ASSUMPTIONS['Other'].sigma,
+               category: p.category || 'Other'
+             };
+           }
+           map[p.ticker].currentValue += p.currentValue;
+         });
+
+         // 2. Add future contributions
+         if (contribAmt > 0 && allocSum === 100) {
+            contribAlloc.forEach(row => {
+               if (!map[row.ticker]) {
+                  const cat = getCategoryForTicker(row.ticker);
+                  const assump = CATEGORY_ASSUMPTIONS[cat] || CATEGORY_ASSUMPTIONS['Other'];
+                  map[row.ticker] = { currentValue: 0, contribAmt: 0, mu: assump.mu, sigma: assump.sigma, category: cat };
+               }
+               map[row.ticker].contribAmt += (Number(contribAmt) * (Number(row.pct) / 100));
+            });
+         }
+         return map;
+      }, [positions, contribAmt, contribAlloc, allocSum]);
+
+      const runSimulation = () => {
+        if (totalValue <= 0 && contribAmt <= 0) return;
+        setSimRunning(true);
+
+        // Use setTimeout to allow the UI to show the "Running..." state before the heavy loop freezes the thread
+        setTimeout(() => {
+          const T = Number(years);
+          const freq = contribFreq === 'Monthly' ? 12 : 1;
+          const dt = 1 / freq;
+          const periods = T * freq;
+
+          const paths = [];
+          const iterations = 10000;
+          const assetKeys = Object.keys(tickerMap);
+
+          for(let i=0; i<iterations; i++) {
+            // Initialize this path's asset values
+            const currentSimValues = {};
+            for (let k = 0; k < assetKeys.length; k++) {
+               currentSimValues[assetKeys[k]] = tickerMap[assetKeys[k]].currentValue;
+            }
+
+            for(let m=0; m<periods; m++) {
+              // Global market factors for this specific time step
+              const Z_eq = randn_bm(); // US Equity market force
+              const Z_in = randn_bm(); // International Equity market force
+              const Z_bd = randn_bm(); // Bond/Rates market force
+              const Z_cr = randn_bm(); // Crypto market force
+
+              for (let k = 0; k < assetKeys.length; k++) {
+                const key = assetKeys[k];
+                const asset = tickerMap[key];
+                const r = asset.mu;
+                const v = asset.sigma;
+                
+                const factors = CATEGORY_FACTORS[asset.category] || CATEGORY_FACTORS['Other'];
+                
+                // Asset specific idiosyncratic random noise
+                const Z_idio = randn_bm();
+                
+                // Calculate the correlated Z-score using the Multi-Factor model
+                // The remainder (1 - sum of squares) is applied to idiosyncratic noise to ensure total variance remains 1
+                const factorVariance = Math.pow(factors.equity, 2) + Math.pow(factors.intl, 2) + Math.pow(factors.bond, 2) + Math.pow(factors.crypto, 2);
+                const Z = (factors.equity * Z_eq) + 
+                          (factors.intl * Z_in) +
+                          (factors.bond * Z_bd) + 
+                          (factors.crypto * Z_cr) + 
+                          (Math.sqrt(Math.max(0, 1 - factorVariance)) * Z_idio);
+
+                // Apply GBM and add periodic contribution
+                currentSimValues[key] = currentSimValues[key] * Math.exp((r - 0.5 * Math.pow(v, 2)) * dt + v * Math.sqrt(dt) * Z) + asset.contribAmt;
+              }
+            }
+
+            let pathSum = 0;
+            for (let k = 0; k < assetKeys.length; k++) {
+               pathSum += currentSimValues[assetKeys[k]];
+            }
+            paths.push(pathSum);
+          }
+
+          paths.sort((a,b) => a - b);
+          
+          const p10 = paths[Math.floor(iterations * 0.1)];
+          const p50 = paths[Math.floor(iterations * 0.5)];
+          const p90 = paths[Math.floor(iterations * 0.9)];
+
+          // Discard extreme 5% tails for visualization purposes to focus on the 90% Confidence Interval
+          const minChart = paths[Math.floor(iterations * 0.05)];
+          const maxChart = paths[Math.floor(iterations * 0.95)];
+          const numBins = 50; // Increased from 40 for smoother resolution
+          const binSize = (maxChart - minChart) / numBins;
+          
+          const bins = Array(numBins).fill(0);
+          paths.forEach(val => {
+              if(val >= minChart && val <= maxChart) {
+                  const binIdx = Math.min(Math.floor((val - minChart) / binSize), numBins - 1);
+                  bins[binIdx]++;
+              }
+          });
+
+          setResults({ p10, p50, p90, bins, minChart, maxChart, maxBinCount: Math.max(...bins) });
+          setSimRunning(false);
+        }, 50);
+      };
+
+      return (
+        <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-500">
+          
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
+            <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
+              <Activity className="text-emerald-400 sm:w-6 sm:h-6" size={20} />
+              <h2 className="text-lg sm:text-xl font-bold text-slate-100">Monte Carlo Simulator</h2>
+            </div>
+            <p className="text-xs sm:text-sm text-slate-400 mb-6 max-w-3xl">
+              Simulate 10,000 possible futures for your portfolio using Geometric Brownian Motion. The engine individually simulates each of your {Object.keys(tickerMap).length} assets using their specific historical metrics, applying a <strong>Multi-Factor Correlation Model</strong> to organically map realistic market relationships.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6">
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">Duration (Years)</label>
+                <div className="flex items-center gap-2">
+                   <button onClick={() => updateSimSettings({ years: Math.max(1, years - 1) })} className="p-2 sm:p-2.5 bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-700 rounded-md transition-colors"><Minus size={16}/></button>
+                   {/* Using text-base to prevent iOS Safari auto-zoom on focus */}
+                   <input type="number" value={years} onChange={(e) => updateSimSettings({ years: Number(e.target.value) })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-center text-base sm:text-sm text-slate-200 font-bold hide-arrows focus:outline-none focus:border-emerald-500" style={{ height: '42px' }} />
+                   <button onClick={() => updateSimSettings({ years: years + 1 })} className="p-2 sm:p-2.5 bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-slate-700 rounded-md transition-colors"><Plus size={16}/></button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">Contribution Freq.</label>
+                {/* Using text-base to prevent iOS Safari auto-zoom on focus */}
+                <select value={contribFreq} onChange={(e) => updateSimSettings({ contribFreq: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-base sm:text-sm text-slate-200 font-bold focus:outline-none focus:border-emerald-500 cursor-pointer" style={{ height: '42px' }}>
+                  <option value="Monthly">Monthly</option>
+                  <option value="Annually">Annually</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">Contribution Amt.</label>
+                <div className="relative">
+                   <span className="absolute left-3 sm:left-4 top-[11px] text-slate-500 font-bold">$</span>
+                   {/* Using text-base to prevent iOS Safari auto-zoom on focus */}
+                   <input type="number" value={contribAmt === 0 ? '' : contribAmt} onChange={(e) => updateSimSettings({ contribAmt: Math.max(0, Number(e.target.value)) })} placeholder="0" className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-7 sm:pl-8 pr-3 py-2 text-base sm:text-sm text-slate-200 font-bold hide-arrows focus:outline-none focus:border-emerald-500" style={{ height: '42px' }} />
+                </div>
+              </div>
+            </div>
+
+            {contribAmt > 0 && (
+              <div className="bg-slate-800/30 border border-slate-800 rounded-xl p-3 sm:p-5 mb-6 animate-in fade-in duration-300">
+                 <div className="flex justify-between items-center mb-3 sm:mb-4">
+                    <label className="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">Contribution Asset Allocation</label>
+                    <span className={`text-[10px] sm:text-xs font-bold ${allocSum === 100 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                       Total: {allocSum}%
+                    </span>
+                 </div>
+                 <div className="space-y-2 sm:space-y-3 mb-4">
+                    {contribAlloc.map(row => (
+                       <div key={row.id} className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
+                          {/* Using text-base to prevent iOS Safari auto-zoom on focus */}
+                          <select 
+                            value={row.ticker} 
+                            onChange={(e) => updateSimSettings({ contribAlloc: contribAlloc.map(r => r.id === row.id ? { ...r, ticker: e.target.value } : r) })} 
+                            className="flex-1 min-w-[120px] bg-slate-950 border border-slate-700 rounded-lg px-2 sm:px-3 py-2 text-base sm:text-sm text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                          >
+                             {uniqueAssets.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                          <div className="relative w-20 sm:w-24 shrink-0">
+                             {/* Using text-base to prevent iOS Safari auto-zoom on focus */}
+                             <input 
+                               type="number" 
+                               value={row.pct === 0 ? '' : row.pct} 
+                               onChange={(e) => updateSimSettings({ contribAlloc: contribAlloc.map(r => r.id === row.id ? { ...r, pct: Number(e.target.value) } : r) })} 
+                               className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-2 sm:pl-3 pr-5 sm:pr-6 py-2 text-base sm:text-sm text-right text-slate-200 hide-arrows focus:outline-none focus:border-emerald-500" 
+                             />
+                             <span className="absolute right-2 top-2 text-slate-500 text-xs sm:text-sm">%</span>
+                          </div>
+                          <button 
+                            onClick={() => updateSimSettings({ contribAlloc: contribAlloc.filter(r => r.id !== row.id) })} 
+                            className="p-2 text-slate-500 hover:text-rose-400 transition-colors"
+                            title="Remove Asset"
+                          >
+                            <Trash2 size={16} className="sm:w-[18px] sm:h-[18px]" />
+                          </button>
+                       </div>
+                    ))}
+                 </div>
+                 <button 
+                   onClick={() => updateSimSettings({ contribAlloc: [...contribAlloc, { id: Date.now(), ticker: uniqueAssets[0] || '', pct: 0 }] })} 
+                   className="flex items-center gap-1 text-xs sm:text-sm text-emerald-400 hover:text-emerald-300 font-semibold transition-colors"
+                 >
+                   <Plus size={14} className="sm:w-[16px] sm:h-[16px]"/> Add Asset
+                 </button>
+              </div>
+            )}
+
+            <button 
+              onClick={runSimulation}
+              disabled={simRunning || (totalValue <= 0 && contribAmt <= 0) || (contribAmt > 0 && allocSum !== 100)}
+              className={`w-full py-3 sm:py-3.5 rounded-xl text-sm sm:text-base font-bold transition-all flex justify-center items-center gap-2 ${simRunning || (totalValue <= 0 && contribAmt <= 0) || (contribAmt > 0 && allocSum !== 100) ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg'}`}
+            >
+              {simRunning ? <><RefreshCw className="animate-spin" size={16}/> Running 10,000 Iterations...</> : 'Run Simulation'}
+            </button>
+          </div>
+
+          {results && (
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+              
+              {/* STATS PANEL */}
+              <div className="lg:col-span-1 flex flex-col gap-3 sm:gap-4">
+                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
+                   <div className="text-[10px] sm:text-xs font-semibold text-rose-400 uppercase tracking-wider mb-1">Bottom 10% Outcome</div>
+                   <div className="text-xl sm:text-2xl font-bold text-slate-100">{formatCurrency(results.p10)}</div>
+                   <div className="text-[10px] sm:text-xs text-slate-500 mt-1">Poor market conditions</div>
+                 </div>
+                 <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-4 sm:p-5 shadow-xl relative overflow-hidden">
+                   <div className="absolute inset-0 bg-emerald-500/5 pointer-events-none"></div>
+                   <div className="text-[10px] sm:text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-1 relative z-10">Median (50%) Outcome</div>
+                   <div className="text-2xl sm:text-3xl font-bold text-slate-100 relative z-10">{formatCurrency(results.p50)}</div>
+                   <div className="text-[10px] sm:text-xs text-slate-400 mt-1 relative z-10">Expected market conditions</div>
+                 </div>
+                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
+                   <div className="text-[10px] sm:text-xs font-semibold text-blue-400 uppercase tracking-wider mb-1">Top 10% Outcome</div>
+                   <div className="text-xl sm:text-2xl font-bold text-slate-100">{formatCurrency(results.p90)}</div>
+                   <div className="text-[10px] sm:text-xs text-slate-500 mt-1">Great market conditions</div>
+                 </div>
+              </div>
+
+              {/* HISTOGRAM CHART */}
+              <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl flex flex-col min-h-[300px] sm:min-h-[350px]">
+                <div className="flex justify-between items-start sm:items-center mb-4 sm:mb-6 flex-col sm:flex-row gap-2">
+                  <h3 className="text-xs sm:text-sm font-semibold text-slate-300 uppercase tracking-wider">Distribution of Outcomes (10,000 Paths)</h3>
+                  <div className="h-auto sm:h-8 flex items-center w-full sm:w-auto">
+                     {hoveredBin !== null ? (
+                        <div className="w-full sm:w-auto text-[10px] sm:text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 sm:px-3 py-1.5 rounded-md border border-emerald-500/20 text-center">
+                           {formatCurrency(results.minChart + hoveredBin * ((results.maxChart - results.minChart) / results.bins.length))} 
+                           {" - "} 
+                           {formatCurrency(results.minChart + (hoveredBin + 1) * ((results.maxChart - results.minChart) / results.bins.length))} 
+                           {" • "} 
+                           {(results.bins[hoveredBin] / 100).toFixed(1)}% chance
+                        </div>
+                     ) : (
+                        <div className="w-full sm:w-auto text-[10px] sm:text-xs font-medium text-slate-500 px-2 sm:px-3 py-1.5 text-center sm:text-left">
+                           Tap or hover a bar to view details
+                        </div>
+                     )}
+                  </div>
+                </div>
+                
+                <div className="flex-1 relative w-full h-full min-h-[200px]">
+                   <svg viewBox="0 0 1000 300" className="w-full h-full overflow-visible" preserveAspectRatio="none">
+                      {/* Bins */}
+                      {results.bins.map((count, i) => {
+                        const barHeight = (count / results.maxBinCount) * 260; // Max height 260px leaving room for text
+                        const barWidth = 1000 / results.bins.length;
+                        const x = i * barWidth;
+                        const y = 280 - barHeight; // Base at Y=280
+
+                        // Highlight the median bin area
+                        const binValue = results.minChart + (i * (results.maxChart - results.minChart) / results.bins.length);
+                        const isMedian = binValue <= results.p50 && (binValue + (results.maxChart - results.minChart) / results.bins.length) >= results.p50;
+
+                        return (
+                          <g key={i} className="group">
+                            <rect 
+                              x={x + 1} 
+                              y={y} 
+                              width={Math.max(1, barWidth - 2)} 
+                              height={barHeight} 
+                              fill={hoveredBin === i ? '#34d399' : (isMedian ? '#10b981' : '#334155')} 
+                              className="transition-all duration-300 cursor-pointer"
+                              onMouseEnter={() => setHoveredBin(i)}
+                              onMouseLeave={() => setHoveredBin(null)}
+                              onClick={() => setHoveredBin(hoveredBin === i ? null : i)}
+                              onTouchStart={() => setHoveredBin(i)}
+                            />
+                          </g>
+                        );
+                      })}
+                      
+                      {/* X Axis Line */}
+                      <line x1="0" y1="280" x2="1000" y2="280" stroke="#1e293b" strokeWidth="2" />
+                      
+                      {/* X Axis Labels */}
+                      <text x="0" y="300" fill="#64748b" className="text-[12px] sm:text-[14px]" textAnchor="start">{formatCurrency(results.minChart)}</text>
+                      <text x="500" y="300" fill="#10b981" className="text-[12px] sm:text-[14px] font-bold" textAnchor="middle">Median: {formatCurrency(results.p50)}</text>
+                      <text x="1000" y="300" fill="#64748b" className="text-[12px] sm:text-[14px]" textAnchor="end">{formatCurrency(results.maxChart)}</text>
+                   </svg>
+                </div>
+              </div>
+
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Mount the Application
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
