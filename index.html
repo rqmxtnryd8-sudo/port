@@ -433,7 +433,7 @@
             <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 animate-in fade-in zoom-in-95 duration-500">
               <div className="flex justify-center mb-6">
                 <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/10">
-                  <ShieldCheck className="text-emerald-400" size={32} />
+                  <Activity className="text-emerald-400" size={32} />
                 </div>
               </div>
               <h1 className="text-2xl font-black text-white text-center tracking-tight mb-2">Portfolio Tracker</h1>
@@ -1465,17 +1465,20 @@
                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
                    <div className="text-[10px] sm:text-xs font-semibold text-rose-400 uppercase tracking-wider mb-1">Bottom 10% Outcome</div>
                    <div className="text-xl sm:text-2xl font-bold text-slate-100">{formatCurrency(results.p10)}</div>
+                   <div className="text-[10px] sm:text-xs font-medium text-slate-500 mt-0.5">≈ {new Intl.NumberFormat('en-HK', { style: 'currency', currency: 'HKD' }).format(results.p10 * 7.8)}</div>
                    <div className="text-[10px] sm:text-xs text-slate-500 mt-1">Poor market conditions</div>
                  </div>
                  <div className="bg-slate-900 border border-emerald-500/30 rounded-2xl p-4 sm:p-5 shadow-xl relative overflow-hidden">
                    <div className="absolute inset-0 bg-emerald-500/5 pointer-events-none"></div>
                    <div className="text-[10px] sm:text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-1 relative z-10">Median (50%) Outcome</div>
                    <div className="text-2xl sm:text-3xl font-bold text-slate-100 relative z-10">{formatCurrency(results.p50)}</div>
+                   <div className="text-[10px] sm:text-xs font-medium text-slate-400 mt-0.5 relative z-10">≈ {new Intl.NumberFormat('en-HK', { style: 'currency', currency: 'HKD' }).format(results.p50 * 7.8)}</div>
                    <div className="text-[10px] sm:text-xs text-slate-400 mt-1 relative z-10">Expected market conditions</div>
                  </div>
                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
                    <div className="text-[10px] sm:text-xs font-semibold text-blue-400 uppercase tracking-wider mb-1">Top 10% Outcome</div>
                    <div className="text-xl sm:text-2xl font-bold text-slate-100">{formatCurrency(results.p90)}</div>
+                   <div className="text-[10px] sm:text-xs font-medium text-slate-500 mt-0.5">≈ {new Intl.NumberFormat('en-HK', { style: 'currency', currency: 'HKD' }).format(results.p90 * 7.8)}</div>
                    <div className="text-[10px] sm:text-xs text-slate-500 mt-1">Great market conditions</div>
                  </div>
               </div>
